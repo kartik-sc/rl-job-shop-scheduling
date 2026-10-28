@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RAJS episode event log (DRAFT - agree and finalise on Day 1)",
+  "type": "object",
+  "required": ["meta", "events"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["instance", "regime", "seed", "policy", "n_jobs", "n_machines"],
+      "properties": {
+        "instance": { "type": "string" },
+        "regime": { "type": "string", "enum": ["low", "medium", "high"] },
+        "seed": { "type": "integer" },
+        "policy": { "type": "string", "enum": ["blind_ppo", "threshold_spt", "full_ppo", "spt", "lpt", "fifo"] },
+        "n_jobs": { "type": "integer" },
+        "n_machines": { "type": "integer" }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["t", "type", "machine"],
+        "properties": {
+          "t": { "type": "number" },
+          "type": {
+            "type": "string",
+            "enum": ["op_start", "op_end", "risk_update", "maintenance_start", "maintenance_end", "breakdown", "episode_end"]
+          },
+          "machine": { "type": "integer" },
+          "job": { "type": "integer" },
+          "op": { "type": "integer" },
+          "risk": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+[project]
+name = "rajs"
+version = "0.1.0"
+description = "Risk-Aware Job-Shop Scheduling via deep RL"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
