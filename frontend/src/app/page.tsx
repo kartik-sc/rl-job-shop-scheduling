@@ -19,6 +19,52 @@ import { getMachineRiskAtTime, parseEpisodeLog } from "@/lib/parseEpisode";
 import GanttChart from "@/components/GanttChart";
 import RiskHeatmap from "@/components/RiskHeatmap";
 import PlaybackControls from "@/components/PlaybackControls";
+import FactoryFloor from "@/components/FactoryFloor";
+import RLBrain from "@/components/RLBrain";
+import TrainingArena, { RaceEntry } from "@/components/TrainingArena";
+import Sandbox from "@/components/Sandbox";
+import { buildEpisodeScene, buildFlows, buildRoutes } from "@/lib/scene";
+import { deriveDecisions, syntheticTraining } from "@/lib/rl";
+
+type Tab = "overview" | "floor" | "rl" | "arena" | "sandbox";
+const TABS: { key: Tab; label: string; emoji: string }[] = [
+  { key: "overview", label: "Overview", emoji: "◰" },
+  { key: "floor", label: "Factory Floor", emoji: "⚙" },
+  { key: "rl", label: "RL Brain", emoji: "✦" },
+  { key: "arena", label: "Training Arena", emoji: "⚑" },
+  { key: "sandbox", label: "Sandbox", emoji: "▶" },
+];
+
+function useAnimatedNumber(target: number, ms = 600) {
+  const [v, setV] = useState(target);
+  const from = React.useRef(target);
+  useEffect(() => {
+    const start = performance.now();
+    const a = from.current;
+    let raf = 0;
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / ms);
+      const e = 1 - Math.pow(1 - p, 3);
+      const cur = a + (target - a) * e;
+      from.current = cur;
+      setV(cur);
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return v;
+}
+
+function Num({ value, digits = 0, suffix = "" }: { value: number; digits?: number; suffix?: string }) {
+  const v = useAnimatedNumber(value);
+  return (
+    <>
+      {v.toFixed(digits)}
+      {suffix}
+    </>
+  );
+}
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -55,6 +101,8 @@ export default function DashboardPage() {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [speed, setSpeed] = useState<number>(1);
   const [selectedJob, setSelectedJob] = useState<number | null>(null);
+  const [tab, setTab] = useState<Tab>("overview");
+  const [selectedMachine, setSelectedMachine] = useState<number | null>(null);
 
   const episodeLog = useMemo(() => {
     if (activePolicyKey === "full_ppo") {
@@ -64,6 +112,19 @@ export default function DashboardPage() {
   }, [activePolicyKey, apiEpisodeLog]);
 
   const parsed = useMemo(() => parseEpisodeLog(episodeLog), [episodeLog]);
+  const routes = useMemo(() => buildRoutes(parsed), [parsed]);
+  const flows = useMemo(() => buildFlows(routes), [routes]);
+  const scene = buildEpisodeScene(parsed, routes, flows, currentTime);
+  const decisions = useMemo(() => deriveDecisions(parsed, episodeLog), [parsed, episodeLog]);
+  const curves = useMemo(() => syntheticTraining(), []);
+  const raceEntries: RaceEntry[] = useMemo(
+    () => [
+      { key: "full_ppo", name: "Risk-aware PPO", color: "#f0abfc", parsed: parseEpisodeLog(apiEpisodeLog) },
+      { key: "threshold_spt", name: "Threshold + SPT", color: "#38bdf8", parsed: parseEpisodeLog(EPISODE_PRESETS.threshold_spt) },
+      { key: "blind_ppo", name: "Blind PPO", color: "#fb923c", parsed: parseEpisodeLog(EPISODE_PRESETS.blind_ppo) },
+    ],
+    [apiEpisodeLog]
+  );
 
   const fetchMockFromApi = useCallback(async () => {
     setApiStatus("loading");
@@ -209,7 +270,7 @@ export default function DashboardPage() {
                 <span className="rounded-md border border-cyan-400/35 bg-cyan-500/15 px-2 py-0.5 font-mono text-[10px] font-bold tracking-widest text-cyan-300 uppercase">
                   RAJS · AIML EL
                 </span>
-                <h1 className="font-display text-xl font-bold tracking-tight text-white sm:text-2xl">
+                <h1 className="font-display text-gradient text-xl font-bold tracking-tight sm:text-2xl">
                   Risk-Aware Job-Shop Scheduling Telemetry
                 </h1>
               </div>
@@ -303,8 +364,33 @@ export default function DashboardPage() {
         </div>
       </header>
 
+      {/* Animated tab navigation */}
+      <nav className="rajs-panel relative flex flex-wrap gap-1 rounded-2xl p-1.5">
+        {TABS.map((tb) => {
+          const active = tab === tb.key;
+          return (
+            <button
+              key={tb.key}
+              onClick={() => {
+                setTab(tb.key);
+                if (tb.key === "sandbox") setIsPlaying(false);
+              }}
+              className={`relative flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-300 ${
+                active
+                  ? "bg-gradient-to-r from-cyan-500/25 via-indigo-500/25 to-fuchsia-500/25 text-white shadow-[0_0_24px_-6px_rgba(129,140,248,0.7)] ring-1 ring-white/15"
+                  : "text-slate-400 hover:bg-white/5 hover:text-slate-100"
+              }`}
+            >
+              <span className={`text-base ${active ? "text-cyan-300" : ""}`}>{tb.emoji}</span>
+              {tb.label}
+            </button>
+          );
+        })}
+      </nav>
+
       {/* 5 High-Contrast KPI Telemetry Cards */}
-      <section className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5">
+      {tab !== "sandbox" && (
+      <section key={`kpi-${tab}`} className="anim-fade-up grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5">
         <div className="rajs-panel relative overflow-hidden rounded-2xl p-4">
           <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-cyan-400 to-blue-500" />
           <div className="flex items-center justify-between text-xs font-medium text-slate-400">
@@ -333,7 +419,7 @@ export default function DashboardPage() {
           </div>
           <div className="mt-2 flex items-baseline gap-1.5 font-mono">
             <span className="text-2xl font-bold text-white">
-              {completedOpsAtTime}
+              <Num value={completedOpsAtTime} />
             </span>
             <span className="text-sm text-slate-400">/ {totalCompletedOps}</span>
           </div>
@@ -353,7 +439,7 @@ export default function DashboardPage() {
           </div>
           <div className="mt-2 flex items-baseline gap-2 font-mono">
             <span className="text-2xl font-bold text-amber-300">
-              {(maxRiskAtTime.risk * 100).toFixed(0)}%
+              <Num value={maxRiskAtTime.risk * 100} suffix="%" />
             </span>
             <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-200">
               M0{maxRiskAtTime.machine}
@@ -406,21 +492,58 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
+      )}
 
       {/* Interactive Timeline Transport & Scrubber Deck */}
-      <PlaybackControls
-        episode={parsed}
-        currentTime={currentTime}
-        makespan={parsed.makespan}
-        isPlaying={isPlaying}
-        speed={speed}
-        onTogglePlay={handleTogglePlay}
-        onReset={handleReset}
-        onStep={handleStep}
-        onScrub={handleScrub}
-        onChangeSpeed={setSpeed}
-      />
+      {tab !== "sandbox" && (
+        <div className="z-30 xl:sticky xl:top-2">
+          <PlaybackControls
+            episode={parsed}
+            currentTime={currentTime}
+            makespan={parsed.makespan}
+            isPlaying={isPlaying}
+            speed={speed}
+            onTogglePlay={handleTogglePlay}
+            onReset={handleReset}
+            onStep={handleStep}
+            onScrub={handleScrub}
+            onChangeSpeed={setSpeed}
+          />
+        </div>
+      )}
 
+      {tab === "floor" && (
+        <div key="floor" className="anim-fade-up">
+          <FactoryFloor
+            scene={scene}
+            paused={!isPlaying}
+            selected={selectedMachine}
+            onSelect={setSelectedMachine}
+            title={`Live Factory Floor · ${parsed.meta.policy}`}
+          />
+        </div>
+      )}
+
+      {tab === "rl" && (
+        <div key="rl" className="anim-fade-up">
+          <RLBrain decisions={decisions} currentTime={currentTime} n={parsed.meta.n_machines} paused={!isPlaying} />
+        </div>
+      )}
+
+      {tab === "arena" && (
+        <div key="arena" className="anim-fade-up">
+          <TrainingArena curves={curves} race={raceEntries} currentTime={currentTime} />
+        </div>
+      )}
+
+      {tab === "sandbox" && (
+        <div key="sandbox" className="anim-fade-up">
+          <Sandbox />
+        </div>
+      )}
+
+      {tab === "overview" && (
+      <div key="overview" className="anim-fade-up flex flex-col gap-5">
       {/* Synchronized D3 Gantt Chart */}
       <GanttChart
         episode={parsed}
@@ -585,6 +708,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
+      </div>
+      )}
     </main>
   );
 }
