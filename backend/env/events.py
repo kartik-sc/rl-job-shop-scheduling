@@ -15,6 +15,7 @@ class EventType(StrEnum):
     MAINTENANCE_START = "maintenance_start"
     MAINTENANCE_END = "maintenance_end"
     BREAKDOWN = "breakdown"
+    REPAIR_END = "repair_end"
     EPISODE_END = "episode_end"
 
 
