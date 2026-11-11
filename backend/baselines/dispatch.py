@@ -1,67 +1,95 @@
-"""Classical dispatching rules over the per-machine decision point.
+"""Classical dispatching rules over the simulator's per-machine decisions.
 
-Each rule picks one job from the legal jobs of the deciding machine. Ties break
-on the lowest job id, which keeps every run reproducible.
+Each rule picks one candidate from a :class:`Decision`. Ties break on the
+lowest job id, so every run is reproducible.
+
+    python -m backend.baselines.dispatch ta01 spt
+    python -m backend.baselines.dispatch ta01 fifo --log ta01_fifo.json --regime low
 """
 
-from collections.abc import Callable
+import argparse
+import json
+from collections.abc import Callable, Sequence
+from pathlib import Path
 
-from backend.env import simulator as sim
-from backend.env.instance import Instance
+from backend.env.events import log_document
+from backend.env.instance import Instance, from_benchmark
+from backend.env.simulator import Candidate, Decision, Dispatch, EpisodeResult, run_episode
 
-Rule = Callable[[sim.State, Instance, tuple[int, ...], int], int]
+Rule = Callable[[Decision], Dispatch]
 
-
-def shortest_processing_time(
-    state: sim.State, instance: Instance, jobs: tuple[int, ...], machine_id: int
-) -> int:
-    return min(jobs, key=lambda job_id: (_duration(state, instance, job_id), job_id))
-
-
-def longest_processing_time(
-    state: sim.State, instance: Instance, jobs: tuple[int, ...], machine_id: int
-) -> int:
-    return min(jobs, key=lambda job_id: (-_duration(state, instance, job_id), job_id))
+LOGGABLE_POLICIES = ("spt", "lpt", "fifo")
+REGIMES = ("low", "medium", "high")
 
 
-def first_in_first_out(
-    state: sim.State, instance: Instance, jobs: tuple[int, ...], machine_id: int
-) -> int:
-    """TODO(kartik): choose and implement the FIFO definition.
+def shortest_processing_time(decision: Decision) -> Dispatch:
+    return _choose(decision, lambda candidate: candidate.duration)
 
-    Two defensible readings, and they schedule differently:
 
-    a) Queue arrival order: the job that has been waiting longest at this
-       machine, i.e. the smallest ``state.job_free_at[job_id]``. This is what
-       FIFO means on a real shop floor queue.
-    b) Earliest in its job: the smallest ``position`` of the next operation,
-       which is what ``job_shop_lib``'s ``first_come_first_served_rule`` does.
-       It favours jobs that have barely started, regardless of waiting time.
+def longest_processing_time(decision: Decision) -> Dispatch:
+    return _choose(decision, lambda candidate: -candidate.duration)
 
-    (a) is the honest baseline and reads as FIFO to anyone reviewing the
-    report; (b) makes our numbers directly comparable to the library's. Break
-    ties on the lowest job id either way.
+
+def first_in_first_out(decision: Decision) -> Dispatch:
+    """The job that has waited longest in this machine's queue."""
+    return _choose(decision, lambda candidate: candidate.arrived_at)
+
+
+def first_come_first_served(decision: Decision) -> Dispatch:
+    """The job whose next operation is earliest in its own route.
+
+    This is ``job_shop_lib``'s ``first_come_first_served`` rule, kept so the
+    gate can reproduce all three library rules. It ignores waiting time, so it
+    is not FIFO in the shop-floor sense; report :func:`first_in_first_out`.
     """
-    raise NotImplementedError
+    return _choose(decision, lambda candidate: candidate.position)
 
 
-def run(state: sim.State, instance: Instance, rule: Rule) -> sim.State:
-    """Dispatch to completion under the given rule."""
-    while not sim.is_complete(state, instance):
-        machine_id = sim.decision_machine(state, instance)
-        if machine_id is None:
-            raise RuntimeError("no machine can act but the schedule is incomplete")
-        jobs = sim.legal_jobs(state, instance, machine_id)
-        state = sim.dispatch(state, instance, rule(state, instance, jobs, machine_id))
-    return state
+RULES: dict[str, Rule] = {
+    "spt": shortest_processing_time,
+    "lpt": longest_processing_time,
+    "fifo": first_in_first_out,
+    "fcfs": first_come_first_served,
+}
 
 
-def solve(instance: Instance, rule: Rule) -> sim.State:
-    return run(sim.initial_state(instance), instance, rule)
+def solve(instance: Instance, rule: Rule) -> EpisodeResult:
+    return run_episode(instance, rule)
 
 
-def _duration(state: sim.State, instance: Instance, job_id: int) -> int:
-    operation = sim.next_operation(state, instance, job_id)
-    if operation is None:
-        raise ValueError(f"job {job_id} has no remaining operations")
-    return operation.duration
+def _choose(decision: Decision, key: Callable[[Candidate], int]) -> Dispatch:
+    best = min(decision.candidates, key=lambda candidate: (key(candidate), candidate.job_id))
+    return Dispatch(best.job_id)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Run a dispatching rule on a benchmark instance.")
+    parser.add_argument("instance", help="benchmark name, e.g. ta01")
+    parser.add_argument("rule", choices=sorted(RULES))
+    parser.add_argument("--log", type=Path, help="write the episode event log as JSON")
+    parser.add_argument(
+        "--regime",
+        choices=REGIMES,
+        help="required with --log, since the schema has no no-failure regime yet",
+    )
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args(argv)
+
+    if args.log and args.regime is None:
+        parser.error("--log requires --regime")
+    if args.log and args.rule not in LOGGABLE_POLICIES:
+        parser.error(f"{args.rule} is not a policy in the event-log schema")
+
+    instance = from_benchmark(args.instance)
+    result = solve(instance, RULES[args.rule])
+    print(f"{instance.name} {args.rule} makespan={result.makespan}")
+
+    if args.log:
+        document = log_document(
+            result.events, instance, policy=args.rule, regime=args.regime, seed=args.seed
+        )
+        args.log.write_text(json.dumps(document, indent=2))
+
+
+if __name__ == "__main__":
+    main()
