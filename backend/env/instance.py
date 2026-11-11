@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from functools import cached_property
 
+import numpy as np
 from job_shop_lib.benchmarking import load_benchmark_instance
 
 
@@ -77,3 +78,29 @@ def from_benchmark(name: str) -> Instance:
         optimum=source.metadata.get("optimum"),
         upper_bound=source.metadata.get("upper_bound"),
     )
+
+
+def random_instance(
+    rng: np.random.Generator,
+    num_jobs: int,
+    num_machines: int,
+    durations: tuple[int, int] = (1, 99),
+) -> Instance:
+    """A Taillard-style instance: every job visits every machine once, in random
+    order, with durations uniform on the inclusive range. It has no known optimum."""
+    low, high = durations
+    if low < 1 or high < low:
+        raise ValueError(f"durations must satisfy 1 <= low <= high, got {durations}")
+    jobs = tuple(
+        tuple(
+            Operation(
+                job_id=job_id,
+                position=position,
+                machine_id=int(machine_id),
+                duration=int(rng.integers(low, high + 1)),
+            )
+            for position, machine_id in enumerate(rng.permutation(num_machines))
+        )
+        for job_id in range(num_jobs)
+    )
+    return Instance(name=f"random_{num_jobs}x{num_machines}", jobs=jobs, num_machines=num_machines)

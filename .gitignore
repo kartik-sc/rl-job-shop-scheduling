@@ -17,6 +17,7 @@ out/
 data/raw/
 data/processed/
 runs/
+results/
 models/
 *.zip
 *.pt

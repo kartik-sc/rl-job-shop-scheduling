@@ -4,6 +4,7 @@
 numpy>=1.26
 pandas>=2.1
 scikit-learn>=1.4
+scipy>=1.11
 gymnasium>=0.29
 stable-baselines3>=2.3
 sb3-contrib>=2.3

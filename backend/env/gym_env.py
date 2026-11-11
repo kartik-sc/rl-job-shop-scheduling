@@ -146,6 +146,21 @@ class JobShopEnv(gym.Env[np.ndarray, np.int64]):
             info["makespan"] = simulation.makespan
         return self._observation(), reward, terminated, truncated, info
 
+    @property
+    def decision(self) -> Decision | None:
+        """The pending kernel decision, for rule-based policies acting through the env."""
+        return self._decision
+
+    def encode(self, action: Action) -> int:
+        """The action index for a kernel action; the inverse of the env's decoding."""
+        match action:
+            case Maintain():
+                return self._maintain_index
+            case Wait():
+                return self._wait_index
+            case Dispatch(job_id=job_id):
+                return job_id
+
     def action_masks(self) -> np.ndarray:
         mask = np.zeros(self.action_space.n, dtype=bool)
         decision = self._decision

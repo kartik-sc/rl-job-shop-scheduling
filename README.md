@@ -11,8 +11,10 @@ backend/
   env/          simulator and Gymnasium environment
   risk/         Layer 1 anomaly detection and calibration (C-MAPSS)
   baselines/    SPT, LPT, FIFO, threshold + SPT
+  training/     protocol loading, env factory, PPO training
   evaluation/   multi-seed evaluation and statistics
   api/          FastAPI service for the dashboard
+configs/        experimental protocol (TOML)
 frontend/       Next.js + D3 dashboard
 shared/schemas/ event-log schema shared by backend and frontend
 data/           local datasets (git-ignored) and committed splits
@@ -71,6 +73,48 @@ python -m backend.baselines.dispatch ta01 fifo --log ta01_fifo.json --regime low
 Ties break on the lowest job id. `tests/test_simulator.py` is the Day 2 gate: makespans pinned on ta01, ta11, ta21, ta31 and ta41, exact equality with `job_shop_lib` on ta01-ta10 plus those four, and an operation-by-operation replay of the library's schedules.
 
 Run code in WSL: Windows Smart App Control blocks compiled extensions in Windows Python.
+
+## Training and evaluation
+
+The experiment is defined by one file, `configs/protocol.toml`: regimes, per-machine degradation rates, the instance split, seeds, PPO hyperparameters, step budgets and the tau grid. Every run directory and every result row records the file's sha256, and results from different hashes are never combined. `configs/smoke.toml` has the same shape with tiny budgets.
+
+Every policy, trained or not, acts through `JobShopEnv.reset(seed=...)`, so all of them meet the same instance, rates and failures for a given `(instance, regime, seed)`.
+
+| Split | Instances | Health seeds | Engine pool | Used for |
+|---|---|---|---|---|
+| train | training Taillard + random instances | fresh each episode | fit | PPO learning |
+| tune | training Taillard | `seeds.tune` | fit | choosing tau and PPO checkpoints |
+| test | held-out Taillard 15x15 and 20x15 | `seeds.test` | test | every reported number |
+
+```bash
+P=configs/protocol.toml
+python -m backend.evaluation.calibrate --protocol $P --workers 16            # regime statistics under blind SPT
+python -m backend.training.train --protocol $P --mode full --regime high --train-seed 0   # one per mode x regime x seed
+python -m backend.evaluation.selection --protocol $P --workers 16            # tau and best checkpoint per run
+python -m backend.evaluation.evaluate --protocol $P --workers 16 --save-logs
+python -m backend.evaluation.aggregate --protocol $P
+```
+
+Outputs:
+- `runs/<hash>/<mode>_<regime>_s<seed>/`: `config.json`, `progress.csv`, `monitor.csv`, checkpoints and `final.zip`.
+- `results/<hash>/`:
+  - `selection.json` and `tune/`
+  - `episodes/` (one CSV per contender and regime; reruns skip finished files)
+  - `reference.csv` (best-known makespans and no-failure rules)
+  - `summary.csv` and `paired.csv`
+  - `logs/` (dashboard event logs)
+
+Metrics come from the event log alone (`backend/evaluation/metrics.py`):
+
+| Metric | Definition |
+|---|---|
+| gap | makespan / best-known makespan - 1 |
+| breakdown rate | breakdowns per 100 operations |
+| maintenance share | maintenance downtime / (machines x makespan) |
+
+Tables average seeds within each instance first and give 95% bootstrap intervals over instances. Paired comparisons (`full_ppo` vs `blind_ppo`, `full_ppo` vs `threshold_spt`) add a Wilcoxon signed-rank test over instances.
+
+Health is currently driven by `backend/risk/synthetic.py`. A real engine plugs in by registering its `sample_engine` in `backend/training/factory.py` (`ENGINES`), then setting `engine` in the protocol. `tests/test_engine_contract.py` runs against every registered engine.
 
 ## Conventions
 
