@@ -24,6 +24,24 @@ export interface EpisodeMeta {
   policy: PolicyName;
   n_jobs: number;
   n_machines: number;
+  health_model?: string;
+  pool?: string;
+  tau?: number;
+}
+
+export type EpisodeSource = "real" | "mock";
+
+export interface EpisodeSummary {
+  id: string;
+  source: EpisodeSource;
+  label: string;
+  detail: string;
+  meta: EpisodeMeta;
+  makespan: number;
+  maintenances: number;
+  breakdowns: number;
+  maintenance_downtime: number | null;
+  repair_downtime: number | null;
 }
 
 export interface ScheduleEvent {

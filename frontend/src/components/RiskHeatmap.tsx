@@ -138,7 +138,7 @@ export default function RiskHeatmap({
         .attr("fill", "#e2e8f0")
         .attr("font-size", "11px")
         .attr("font-weight", "700")
-        .text(`M0${m}`);
+        .text(`M${m}`);
 
       labelG
         .append("text")
@@ -152,8 +152,8 @@ export default function RiskHeatmap({
         .text(`${(liveRisk * 100).toFixed(0)}%`);
     }
 
-    // Discretize timeline into fine 2-unit thermal slices
-    const step = 2;
+    // About 300 slices across the episode, never finer than 2 units
+    const step = Math.max(2, Math.ceil(episode.makespan / 300));
     const cells: {
       machine: number;
       t0: number;
@@ -196,7 +196,7 @@ export default function RiskHeatmap({
     for (let m = 0; m < nMachines; m++) {
       const yTop = yScale(`M${m}`) ?? 0;
       const pts: [number, number][] = [];
-      for (let t = 0; t <= episode.makespan; t += 2) {
+      for (let t = 0; t <= episode.makespan; t += step) {
         const r = getMachineRiskAtTime(episode, m, t);
         pts.push([xScale(t), yTop + bandHeight - r * (bandHeight - 4) - 2]);
       }
@@ -264,7 +264,7 @@ export default function RiskHeatmap({
         <div className="flex flex-wrap items-center gap-3 text-xs">
           {hoverCell && (
             <span className="rounded-lg border border-cyan-500/40 bg-cyan-950/60 px-2.5 py-1 font-mono text-[11px] font-semibold text-cyan-300">
-              M0{hoverCell.machine} @ t={hoverCell.t}u → Risk{" "}
+              M{hoverCell.machine} @ t={hoverCell.t}u → Risk{" "}
               {(hoverCell.risk * 100).toFixed(0)}% ({hoverCell.risk.toFixed(2)})
             </span>
           )}

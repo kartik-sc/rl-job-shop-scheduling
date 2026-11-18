@@ -1,9 +1,7 @@
-from typing import Any
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.mock_data import get_mock_episode
+from backend.api.episodes import EpisodeLog, EpisodeSummary, get_episode, list_episodes
 
 app = FastAPI(title="RAJS API")
 
@@ -21,28 +19,17 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/episodes")
-@app.get("/api/episodes")
-def list_episodes() -> list[dict[str, Any]]:
-    mock = get_mock_episode()
-    return [
-        {
-            "id": "mock",
-            "label": "Mock Episode (6M × 5J, 1 PM, 1 Breakdown)",
-            "meta": mock["meta"],
-        }
-    ]
+@app.get("/episodes", response_model=list[EpisodeSummary])
+@app.get("/api/episodes", response_model=list[EpisodeSummary])
+def read_episodes() -> list[EpisodeSummary]:
+    """Real simulator logs first, then the mock, whose label starts with MOCK DATA."""
+    return list_episodes()
 
 
-@app.get("/episodes/mock")
-@app.get("/api/episodes/mock")
-def read_mock_episode() -> dict[str, Any]:
-    return get_mock_episode()
-
-
-@app.get("/episodes/{episode_id}")
-@app.get("/api/episodes/{episode_id}")
-def read_episode(episode_id: str) -> dict[str, Any]:
-    if episode_id == "mock":
-        return get_mock_episode()
-    raise HTTPException(status_code=404, detail=f"Episode '{episode_id}' not found")
+@app.get("/episodes/{episode_id}", response_model=EpisodeLog, response_model_exclude_none=True)
+@app.get("/api/episodes/{episode_id}", response_model=EpisodeLog, response_model_exclude_none=True)
+def read_episode(episode_id: str) -> EpisodeLog:
+    log = get_episode(episode_id)
+    if log is None:
+        raise HTTPException(status_code=404, detail=f"Episode '{episode_id}' not found")
+    return EpisodeLog.model_validate(log)

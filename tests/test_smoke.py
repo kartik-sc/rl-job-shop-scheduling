@@ -63,3 +63,39 @@ def test_mock_episode_matches_schema_and_plan_constraints() -> None:
     assert len(maint_ends) == 1
     assert len(breakdowns) == 1
     assert len(ep_ends) == 1
+
+
+def test_episode_list_puts_real_logs_first_and_labels_the_mock() -> None:
+    episodes = TestClient(app).get("/episodes").json()
+    real = [e for e in episodes if e["source"] == "real"]
+    mock = [e for e in episodes if e["source"] == "mock"]
+
+    assert {e["meta"]["policy"] for e in real} == {"spt", "lpt", "fifo", "threshold_spt"}
+    assert episodes[: len(real)] == real
+    assert all(e["label"].endswith(", real health model") for e in real)
+    assert "Threshold+SPT, real health model" in {e["label"] for e in real}
+    assert all(not e["label"].startswith("MOCK DATA") for e in real)
+    assert [e["id"] for e in mock] == ["mock"]
+    assert all(e["label"].startswith("MOCK DATA") for e in mock)
+
+
+def test_real_episodes_are_served_and_fit_the_schema() -> None:
+    import jsonschema
+
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    client = TestClient(app)
+    for summary in client.get("/episodes").json():
+        if summary["source"] != "real":
+            continue
+        log = client.get(f"/episodes/{summary['id']}").json()
+        jsonschema.validate(log, schema)
+        assert log["meta"]["health_model"] == "cmapss/ocsvm/A_ds_iso"
+        assert log["meta"]["n_machines"] == 15
+        assert log["events"][-1]["type"] == "episode_end"
+        assert summary["makespan"] == log["events"][-1]["t"]
+
+
+def test_unknown_or_escaping_episode_ids_are_not_found() -> None:
+    client = TestClient(app)
+    assert client.get("/episodes/nope").status_code == 404
+    assert client.get("/episodes/..%2Fsummary").status_code == 404

@@ -13,96 +13,99 @@ import {
   ShieldCheck,
   Wrench,
 } from "lucide-react";
-import { EpisodeLog } from "@/types/eventLog";
-import { EPISODE_PRESETS, MOCK_EPISODE_LOG } from "@/lib/mockEpisode";
+import { EpisodeLog, EpisodeSummary } from "@/types/eventLog";
+import { MOCK_EPISODE_LOG } from "@/lib/mockEpisode";
+import {
+  fetchEpisodes,
+  loadEpisode,
+  localEpisodes,
+  MOCK_LABEL,
+} from "@/lib/episodes";
 import { getMachineRiskAtTime, parseEpisodeLog } from "@/lib/parseEpisode";
 import GanttChart from "@/components/GanttChart";
 import RiskHeatmap from "@/components/RiskHeatmap";
 import PlaybackControls from "@/components/PlaybackControls";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+/** Playback covers a whole episode in about this many seconds at 1x. */
+const PLAYBACK_SECONDS = 10;
 
-const POLICY_OPTIONS = [
-  {
-    key: "full_ppo",
-    label: "Full Risk-Aware PPO",
-    badge: "Canonical Mock",
-    desc: "Balances C-MAPSS risk & queue state (1 PM, 1 Breakdown · 110u)",
-  },
-  {
-    key: "threshold_spt",
-    label: "Threshold + SPT (τ=0.70)",
-    badge: "Heuristic Baseline",
-    desc: "Strict rule-based PM whenever risk ≥ 0.70 (4 PMs, 0 Breakdowns · 116u)",
-  },
-  {
-    key: "blind_ppo",
-    label: "Maintenance-Blind PPO",
-    badge: "Ablation Baseline",
-    desc: "Ignores risk telemetry; runs to failure (0 PMs, 2 Breakdowns · 132u)",
-  },
-] as const;
+function formatDowntime(episode: EpisodeSummary): string {
+  const { maintenance_downtime: pm, repair_downtime: repair } = episode;
+  return pm === null || repair === null ? "—" : `${pm + repair}u`;
+}
 
 export default function DashboardPage() {
-  const [activePolicyKey, setActivePolicyKey] = useState<string>("full_ppo");
-  const [apiEpisodeLog, setApiEpisodeLog] =
-    useState<EpisodeLog>(MOCK_EPISODE_LOG);
+  const [episodes, setEpisodes] = useState<EpisodeSummary[]>(() =>
+    localEpisodes(false)
+  );
+  const [activeId, setActiveId] = useState<string>("local-mock-full_ppo");
+  const [episodeLog, setEpisodeLog] = useState<EpisodeLog>(MOCK_EPISODE_LOG);
   const [apiStatus, setApiStatus] = useState<
     "connected" | "fallback" | "loading"
   >("loading");
-  const [currentTime, setCurrentTime] = useState<number>(110);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [speed, setSpeed] = useState<number>(1);
   const [selectedJob, setSelectedJob] = useState<number | null>(null);
 
-  const episodeLog = useMemo(() => {
-    if (activePolicyKey === "full_ppo") {
-      return apiEpisodeLog;
-    }
-    return EPISODE_PRESETS[activePolicyKey] ?? apiEpisodeLog;
-  }, [activePolicyKey, apiEpisodeLog]);
-
   const parsed = useMemo(() => parseEpisodeLog(episodeLog), [episodeLog]);
 
-  const fetchMockFromApi = useCallback(async () => {
-    setApiStatus("loading");
+  const activeEpisode = useMemo(
+    () => episodes.find((e) => e.id === activeId),
+    [episodes, activeId]
+  );
+  const isMock = activeEpisode?.source !== "real";
+
+  const selectEpisode = useCallback(async (id: string) => {
+    setIsPlaying(false);
+    setSelectedJob(null);
+    setLoadError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/episodes/mock`, {
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as EpisodeLog;
-      setApiEpisodeLog(data);
-      const parsedData = parseEpisodeLog(data);
-      setCurrentTime(parsedData.makespan);
-      setApiStatus("connected");
-    } catch {
-      setApiEpisodeLog(MOCK_EPISODE_LOG);
-      setApiStatus("fallback");
+      const log = await loadEpisode(id);
+      setActiveId(id);
+      setEpisodeLog(log);
+      setCurrentTime(parseEpisodeLog(log).makespan);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
     }
   }, []);
 
-  useEffect(() => {
-    fetchMockFromApi();
-  }, [fetchMockFromApi]);
+  const refreshEpisodes = useCallback(async () => {
+    setApiStatus("loading");
+    try {
+      const served = await fetchEpisodes();
+      const all = [...served, ...localEpisodes(true)];
+      setEpisodes(all);
+      setApiStatus("connected");
+      await selectEpisode(all[0].id);
+    } catch {
+      setEpisodes(localEpisodes(false));
+      setApiStatus("fallback");
+      await selectEpisode("local-mock-full_ppo");
+    }
+  }, [selectEpisode]);
 
-  const handleSelectPolicy = (key: string) => {
-    setIsPlaying(false);
-    setActivePolicyKey(key);
-    const targetLog =
-      key === "full_ppo"
-        ? apiEpisodeLog
-        : EPISODE_PRESETS[key] ?? apiEpisodeLog;
-    const p = parseEpisodeLog(targetLog);
-    setCurrentTime(p.makespan);
-  };
+  useEffect(() => {
+    refreshEpisodes();
+  }, [refreshEpisodes]);
+
+  const comparisonRows = useMemo(
+    () =>
+      episodes.filter(
+        (e) =>
+          e.source === activeEpisode?.source &&
+          e.meta.instance === activeEpisode.meta.instance
+      ),
+    [episodes, activeEpisode]
+  );
 
   // Smooth playback loop
   useEffect(() => {
     if (!isPlaying) return;
     const intervalMs = 40;
-    const stepPerTick = (speed * 0.45 * intervalMs) / 40;
+    const stepPerTick =
+      (speed * parsed.makespan * intervalMs) / (PLAYBACK_SECONDS * 1000);
 
     const timer = window.setInterval(() => {
       setCurrentTime((prev) => {
@@ -225,7 +228,8 @@ export default function DashboardPage() {
                 <span>
                   Topology:{" "}
                   <strong className="text-slate-200">
-                    {parsed.meta.n_machines}M × {parsed.meta.n_jobs}J (20 Ops)
+                    {parsed.meta.n_machines}M × {parsed.meta.n_jobs}J (
+                    {totalCompletedOps} Ops)
                   </strong>
                 </span>
                 <span className="text-slate-700">•</span>
@@ -243,27 +247,33 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Right: Policy Selector & API Connection Status */}
+          {/* Right: Episode Selector & API Connection Status */}
           <div className="flex flex-wrap items-center gap-3">
-            {/* Policy Switcher */}
-            <div className="flex items-center rounded-xl border border-slate-800 bg-slate-950/90 p-1">
-              {POLICY_OPTIONS.map((opt) => {
-                const active = activePolicyKey === opt.key;
-                return (
-                  <button
-                    key={opt.key}
-                    onClick={() => handleSelectPolicy(opt.key)}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                      active
-                        ? "bg-gradient-to-r from-cyan-500/25 to-blue-600/25 text-cyan-200 border border-cyan-400/40 shadow-sm"
-                        : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
+            <label className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/90 px-3 py-1.5 text-xs text-slate-400">
+              <span className="font-semibold">Episode</span>
+              <select
+                value={activeId}
+                onChange={(e) => selectEpisode(e.target.value)}
+                className="max-w-[22rem] rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 font-semibold text-slate-100 focus:border-cyan-400 focus:outline-none"
+              >
+                {(["real", "mock"] as const).map((source) => {
+                  const group = episodes.filter((e) => e.source === source);
+                  if (group.length === 0) return null;
+                  return (
+                    <optgroup
+                      key={source}
+                      label={source === "real" ? "Real health model" : MOCK_LABEL}
+                    >
+                      {group.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+              </select>
+            </label>
 
             {/* FastAPI Status Badge */}
             <div
@@ -293,8 +303,9 @@ export default function DashboardPage() {
             </div>
 
             <button
-              onClick={fetchMockFromApi}
-              title="Re-fetch /episodes/mock from FastAPI"
+              onClick={refreshEpisodes}
+              title="Re-fetch /episodes from FastAPI"
+              aria-label="Re-fetch episodes from the API"
               className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700/80 bg-slate-900 text-slate-300 transition hover:border-cyan-400/50 hover:text-white"
             >
               <RefreshCw className="h-4 w-4" />
@@ -302,6 +313,50 @@ export default function DashboardPage() {
           </div>
         </div>
       </header>
+
+      {/* Data source: every mock episode says so, every real one names its policy */}
+      {isMock ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-3 rounded-2xl border-2 border-amber-400/70 bg-amber-950/60 px-5 py-3"
+        >
+          <span className="rounded-md bg-amber-400 px-2.5 py-1 font-mono text-sm font-black tracking-widest text-amber-950">
+            {MOCK_LABEL}
+          </span>
+          <span className="text-sm font-semibold text-amber-100">
+            {activeEpisode?.label ?? `${MOCK_LABEL}: hand-written episode`}
+          </span>
+          <span className="text-xs text-amber-200/80">
+            Hand-written for UI development. Not a simulation result.
+          </span>
+        </div>
+      ) : (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-3 rounded-2xl border border-emerald-500/40 bg-emerald-950/30 px-5 py-3"
+        >
+          <span className="text-sm font-bold text-emerald-200">
+            {activeEpisode?.label}
+          </span>
+          <span className="font-mono text-xs text-emerald-300/80">
+            {activeEpisode?.detail}
+          </span>
+          {parsed.meta.health_model && (
+            <span className="font-mono text-xs text-slate-400">
+              health model: {parsed.meta.health_model} ({parsed.meta.pool}{" "}
+              engines)
+            </span>
+          )}
+        </div>
+      )}
+      {loadError && (
+        <div
+          role="alert"
+          className="rounded-xl border border-rose-500/50 bg-rose-950/50 px-4 py-2 font-mono text-xs text-rose-200"
+        >
+          Could not load episode: {loadError}
+        </div>
+      )}
 
       {/* 5 High-Contrast KPI Telemetry Cards */}
       <section className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5">
@@ -356,7 +411,7 @@ export default function DashboardPage() {
               {(maxRiskAtTime.risk * 100).toFixed(0)}%
             </span>
             <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-200">
-              M0{maxRiskAtTime.machine}
+              M{maxRiskAtTime.machine}
             </span>
           </div>
           <div className="mt-1.5 text-[11px] text-slate-400">
@@ -380,7 +435,7 @@ export default function DashboardPage() {
           </div>
           <div className="mt-1.5 text-[11px] text-slate-400">
             {parsed.maintenances.length > 0
-              ? `M0${parsed.maintenances[0].machine} reset to healthy (~0.08)`
+              ? `First on M${parsed.maintenances[0].machine} at t=${parsed.maintenances[0].start}u`
               : "No preventive maintenance scheduled"}
           </div>
         </div>
@@ -401,7 +456,7 @@ export default function DashboardPage() {
           </div>
           <div className="mt-1.5 text-[11px] text-slate-400">
             {parsed.breakdowns.length > 0
-              ? `Cost: 5× t_pm + interrupted op restart`
+              ? "Interrupted operations restart after repair"
               : "Zero breakdowns experienced"}
           </div>
         </div>
@@ -446,6 +501,11 @@ export default function DashboardPage() {
               <Layers className="h-4 w-4 text-cyan-400" />
               <h2 className="font-display text-sm font-bold text-white sm:text-base">
                 Policy Comparison on Instance ({parsed.meta.instance})
+                {isMock && (
+                  <span className="ml-2 rounded bg-amber-400 px-1.5 py-0.5 font-mono text-[10px] font-black tracking-widest text-amber-950">
+                    {MOCK_LABEL}
+                  </span>
+                )}
               </h2>
             </div>
             <span className="font-mono text-[11px] text-slate-400">
@@ -459,46 +519,18 @@ export default function DashboardPage() {
                 <tr className="border-b border-slate-800 font-mono text-[10px] uppercase tracking-wider text-slate-400">
                   <th className="pb-2.5 pr-3">Policy</th>
                   <th className="pb-2.5 px-2">Makespan</th>
-                  <th className="pb-2.5 px-2">PMs (t_pm)</th>
+                  <th className="pb-2.5 px-2">PMs</th>
                   <th className="pb-2.5 px-2">Breakdowns</th>
                   <th className="pb-2.5 pl-2">Downtime</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono">
-                {[
-                  {
-                    key: "full_ppo",
-                    name: "Full Risk-Aware PPO",
-                    tag: "Ours",
-                    makespan: 110,
-                    pms: 1,
-                    breakdowns: 1,
-                    downtime: 48,
-                  },
-                  {
-                    key: "threshold_spt",
-                    name: "Threshold + SPT (τ=0.70)",
-                    tag: "Rule",
-                    makespan: 116,
-                    pms: 4,
-                    breakdowns: 0,
-                    downtime: 32,
-                  },
-                  {
-                    key: "blind_ppo",
-                    name: "Maintenance-Blind PPO",
-                    tag: "Blind",
-                    makespan: 132,
-                    pms: 0,
-                    breakdowns: 2,
-                    downtime: 80,
-                  },
-                ].map((row) => {
-                  const isCurrent = activePolicyKey === row.key;
+                {comparisonRows.map((row) => {
+                  const isCurrent = activeId === row.id;
                   return (
                     <tr
-                      key={row.key}
-                      onClick={() => handleSelectPolicy(row.key)}
+                      key={row.id}
+                      onClick={() => selectEpisode(row.id)}
                       className={`cursor-pointer transition ${
                         isCurrent
                           ? "bg-cyan-500/10 text-white"
@@ -512,23 +544,25 @@ export default function DashboardPage() {
                               isCurrent ? "bg-cyan-400" : "bg-slate-600"
                             }`}
                           />
-                          <span>{row.name}</span>
-                          <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
-                            {row.tag}
-                          </span>
+                          <span>{row.label}</span>
+                          {row.meta.tau != null && (
+                            <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-cyan-300">
+                              τ={row.meta.tau}
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="py-3 px-2 font-bold text-cyan-300">
                         {row.makespan}u
                       </td>
                       <td className="py-3 px-2 text-emerald-300">
-                        {row.pms} ({row.pms * 8}u)
+                        {row.maintenances}
                       </td>
                       <td className="py-3 px-2 text-rose-300">
-                        {row.breakdowns} ({row.breakdowns * 40}u)
+                        {row.breakdowns}
                       </td>
                       <td className="py-3 pl-2 text-slate-300">
-                        {row.downtime}u
+                        {formatDowntime(row)}
                       </td>
                     </tr>
                   );
@@ -576,7 +610,7 @@ export default function DashboardPage() {
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-300">
-                  {ev.machine !== undefined && `M0${ev.machine} `}
+                  {ev.machine !== undefined && `M${ev.machine} `}
                   {ev.job !== undefined && `J${ev.job}·O${ev.op} `}
                   {ev.risk !== undefined && `r=${ev.risk.toFixed(2)}`}
                 </div>

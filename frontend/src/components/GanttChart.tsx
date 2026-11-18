@@ -62,6 +62,10 @@ export default function GanttChart({
   const rowHeight = 56;
   const margin = { top: 34, right: 24, bottom: 36, left: 152 };
   const nMachines = episode.meta.n_machines;
+  const firstPm = episode.maintenances[0];
+  const firstBreakdown = episode.breakdowns[0];
+  const tPm = firstPm && firstPm.end - firstPm.start;
+  const tRepair = firstBreakdown && firstBreakdown.repairEndTime - firstBreakdown.breakdownTime;
   const height = margin.top + margin.bottom + nMachines * rowHeight;
 
   const activeHighlightJob = selectedJob !== null ? selectedJob : hoveredJob;
@@ -644,12 +648,12 @@ export default function GanttChart({
 
           <span className="flex items-center gap-1.5 rounded-lg border border-emerald-500/35 bg-emerald-950/40 px-2.5 py-1 font-mono text-[11px] text-emerald-300">
             <span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" />
-            PM (t_pm=8u)
+            PM{tPm !== undefined && ` (t_pm=${tPm}u)`}
           </span>
 
           <span className="flex items-center gap-1.5 rounded-lg border border-rose-500/35 bg-rose-950/40 px-2.5 py-1 font-mono text-[11px] text-rose-300">
             <span className="h-2.5 w-2.5 rounded-sm bg-rose-500" />
-            Breakdown (t_repair=40u)
+            Breakdown{tRepair !== undefined && ` (t_repair=${tRepair}u)`}
           </span>
         </div>
       </div>
