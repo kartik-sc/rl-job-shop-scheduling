@@ -25,6 +25,55 @@ import { getMachineRiskAtTime, parseEpisodeLog } from "@/lib/parseEpisode";
 import GanttChart from "@/components/GanttChart";
 import RiskHeatmap from "@/components/RiskHeatmap";
 import PlaybackControls from "@/components/PlaybackControls";
+import FactoryFloor from "@/components/FactoryFloor";
+import RLBrain from "@/components/RLBrain";
+import TrainingArena, { RaceEntry } from "@/components/TrainingArena";
+import Sandbox from "@/components/Sandbox";
+import { MockBadge, MockNotice } from "@/components/MockBadge";
+import { buildEpisodeScene, buildFlows, buildRoutes } from "@/lib/scene";
+import { deriveDecisions, syntheticTraining } from "@/lib/rl";
+
+type Tab = "overview" | "floor" | "rl" | "arena" | "sandbox";
+const TABS: { key: Tab; label: string; emoji: string }[] = [
+  { key: "overview", label: "Overview", emoji: "◰" },
+  { key: "floor", label: "Factory Floor", emoji: "⚙" },
+  { key: "rl", label: "RL Brain", emoji: "✦" },
+  { key: "arena", label: "Training Arena", emoji: "⚑" },
+  { key: "sandbox", label: "Sandbox", emoji: "▶" },
+];
+
+function useAnimatedNumber(target: number, ms = 600) {
+  const [v, setV] = useState(target);
+  const from = React.useRef(target);
+  useEffect(() => {
+    const start = performance.now();
+    const a = from.current;
+    let raf = 0;
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / ms);
+      const e = 1 - Math.pow(1 - p, 3);
+      const cur = a + (target - a) * e;
+      from.current = cur;
+      setV(cur);
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return v;
+}
+
+function Num({ value, digits = 0, suffix = "" }: { value: number; digits?: number; suffix?: string }) {
+  const v = useAnimatedNumber(value);
+  return (
+    <>
+      {v.toFixed(digits)}
+      {suffix}
+    </>
+  );
+}
+
+const RACE_COLORS = ["#f0abfc", "#38bdf8", "#fb923c", "#34d399"];
 
 /** Playback covers a whole episode in about this many seconds at 1x. */
 const PLAYBACK_SECONDS = 10;
@@ -48,8 +97,16 @@ export default function DashboardPage() {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [speed, setSpeed] = useState<number>(1);
   const [selectedJob, setSelectedJob] = useState<number | null>(null);
+  const [tab, setTab] = useState<Tab>("floor");
+  const [selectedMachine, setSelectedMachine] = useState<number | null>(null);
+  const [comparisonLogs, setComparisonLogs] = useState<Record<string, EpisodeLog>>({});
 
   const parsed = useMemo(() => parseEpisodeLog(episodeLog), [episodeLog]);
+  const routes = useMemo(() => buildRoutes(parsed), [parsed]);
+  const flows = useMemo(() => buildFlows(routes), [routes]);
+  const scene = buildEpisodeScene(parsed, routes, flows, currentTime);
+  const decisions = useMemo(() => deriveDecisions(parsed, episodeLog), [parsed, episodeLog]);
+  const curves = useMemo(() => syntheticTraining(), []);
 
   const activeEpisode = useMemo(
     () => episodes.find((e) => e.id === activeId),
@@ -57,15 +114,18 @@ export default function DashboardPage() {
   );
   const isMock = activeEpisode?.source !== "real";
 
-  const selectEpisode = useCallback(async (id: string) => {
+  /** The first episode autoplays from t=0; one picked later is shown whole. */
+  const selectEpisode = useCallback(async (id: string, autoplay = false) => {
     setIsPlaying(false);
     setSelectedJob(null);
+    setSelectedMachine(null);
     setLoadError(null);
     try {
       const log = await loadEpisode(id);
       setActiveId(id);
       setEpisodeLog(log);
-      setCurrentTime(parseEpisodeLog(log).makespan);
+      setCurrentTime(autoplay ? 0 : parseEpisodeLog(log).makespan);
+      setIsPlaying(autoplay);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : String(error));
     }
@@ -78,11 +138,11 @@ export default function DashboardPage() {
       const all = [...served, ...localEpisodes(true)];
       setEpisodes(all);
       setApiStatus("connected");
-      await selectEpisode(all[0].id);
+      await selectEpisode(all[0].id, true);
     } catch {
       setEpisodes(localEpisodes(false));
       setApiStatus("fallback");
-      await selectEpisode("local-mock-full_ppo");
+      await selectEpisode("local-mock-full_ppo", true);
     }
   }, [selectEpisode]);
 
@@ -98,6 +158,33 @@ export default function DashboardPage() {
           e.meta.instance === activeEpisode.meta.instance
       ),
     [episodes, activeEpisode]
+  );
+
+  useEffect(() => {
+    const missing = comparisonRows.filter((row) => !(row.id in comparisonLogs));
+    if (missing.length === 0) return;
+    let cancelled = false;
+    Promise.all(missing.map(async (row) => [row.id, await loadEpisode(row.id)] as const))
+      .then((loaded) => {
+        if (!cancelled) setComparisonLogs((prev) => ({ ...prev, ...Object.fromEntries(loaded) }));
+      })
+      .catch((error) => {
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [comparisonRows, comparisonLogs]);
+
+  const raceEntries: RaceEntry[] = useMemo(
+    () =>
+      comparisonRows.flatMap((row, i) => {
+        const log = comparisonLogs[row.id];
+        if (!log) return [];
+        const color = RACE_COLORS[i % RACE_COLORS.length];
+        return [{ key: row.id, name: row.label, color, parsed: parseEpisodeLog(log) }];
+      }),
+    [comparisonRows, comparisonLogs]
   );
 
   // Smooth playback loop
@@ -212,7 +299,7 @@ export default function DashboardPage() {
                 <span className="rounded-md border border-cyan-400/35 bg-cyan-500/15 px-2 py-0.5 font-mono text-[10px] font-bold tracking-widest text-cyan-300 uppercase">
                   RAJS · AIML EL
                 </span>
-                <h1 className="font-display text-xl font-bold tracking-tight text-white sm:text-2xl">
+                <h1 className="font-display text-gradient text-xl font-bold tracking-tight sm:text-2xl">
                   Risk-Aware Job-Shop Scheduling Telemetry
                 </h1>
               </div>
@@ -320,9 +407,7 @@ export default function DashboardPage() {
           role="status"
           className="flex flex-wrap items-center gap-3 rounded-2xl border-2 border-amber-400/70 bg-amber-950/60 px-5 py-3"
         >
-          <span className="rounded-md bg-amber-400 px-2.5 py-1 font-mono text-sm font-black tracking-widest text-amber-950">
-            {MOCK_LABEL}
-          </span>
+          <MockBadge size="md" />
           <span className="text-sm font-semibold text-amber-100">
             {activeEpisode?.label ?? `${MOCK_LABEL}: hand-written episode`}
           </span>
@@ -357,9 +442,33 @@ export default function DashboardPage() {
           Could not load episode: {loadError}
         </div>
       )}
+      {/* Animated tab navigation */}
+      <nav className="rajs-panel relative flex flex-wrap gap-1 rounded-2xl p-1.5">
+        {TABS.map((tb) => {
+          const active = tab === tb.key;
+          return (
+            <button
+              key={tb.key}
+              onClick={() => {
+                setTab(tb.key);
+                if (tb.key === "sandbox") setIsPlaying(false);
+              }}
+              className={`relative flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-300 ${
+                active
+                  ? "bg-gradient-to-r from-cyan-500/25 via-indigo-500/25 to-fuchsia-500/25 text-white shadow-[0_0_24px_-6px_rgba(129,140,248,0.7)] ring-1 ring-white/15"
+                  : "text-slate-400 hover:bg-white/5 hover:text-slate-100"
+              }`}
+            >
+              <span className={`text-base ${active ? "text-cyan-300" : ""}`}>{tb.emoji}</span>
+              {tb.label}
+            </button>
+          );
+        })}
+      </nav>
 
       {/* 5 High-Contrast KPI Telemetry Cards */}
-      <section className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5">
+      {tab !== "sandbox" && (
+      <section key={`kpi-${tab}`} className="anim-fade-up grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5">
         <div className="rajs-panel relative overflow-hidden rounded-2xl p-4">
           <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-cyan-400 to-blue-500" />
           <div className="flex items-center justify-between text-xs font-medium text-slate-400">
@@ -388,7 +497,7 @@ export default function DashboardPage() {
           </div>
           <div className="mt-2 flex items-baseline gap-1.5 font-mono">
             <span className="text-2xl font-bold text-white">
-              {completedOpsAtTime}
+              <Num value={completedOpsAtTime} />
             </span>
             <span className="text-sm text-slate-400">/ {totalCompletedOps}</span>
           </div>
@@ -408,7 +517,7 @@ export default function DashboardPage() {
           </div>
           <div className="mt-2 flex items-baseline gap-2 font-mono">
             <span className="text-2xl font-bold text-amber-300">
-              {(maxRiskAtTime.risk * 100).toFixed(0)}%
+              <Num value={maxRiskAtTime.risk * 100} suffix="%" />
             </span>
             <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-200">
               M{maxRiskAtTime.machine}
@@ -461,21 +570,71 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
+      )}
 
       {/* Interactive Timeline Transport & Scrubber Deck */}
-      <PlaybackControls
-        episode={parsed}
-        currentTime={currentTime}
-        makespan={parsed.makespan}
-        isPlaying={isPlaying}
-        speed={speed}
-        onTogglePlay={handleTogglePlay}
-        onReset={handleReset}
-        onStep={handleStep}
-        onScrub={handleScrub}
-        onChangeSpeed={setSpeed}
-      />
+      {tab !== "sandbox" && (
+        <div className="z-30 xl:sticky xl:top-2">
+          <PlaybackControls
+            episode={parsed}
+            currentTime={currentTime}
+            makespan={parsed.makespan}
+            isPlaying={isPlaying}
+            speed={speed}
+            onTogglePlay={handleTogglePlay}
+            onReset={handleReset}
+            onStep={handleStep}
+            onScrub={handleScrub}
+            onChangeSpeed={setSpeed}
+          />
+        </div>
+      )}
 
+      {tab === "floor" && (
+        <div key="floor" className="anim-fade-up">
+          <FactoryFloor
+            scene={scene}
+            paused={!isPlaying}
+            selected={selectedMachine}
+            onSelect={setSelectedMachine}
+            title={`Live Factory Floor · ${parsed.meta.policy}`}
+          />
+        </div>
+      )}
+
+      {tab === "rl" && (
+        <div key="rl" className="anim-fade-up flex flex-col gap-5">
+          <MockNotice>
+            No policy has been trained for this view. Decision times and actions come from the
+            selected log; the action probabilities, network activations and reward breakdown are
+            illustrative.
+          </MockNotice>
+          <RLBrain decisions={decisions} currentTime={currentTime} n={parsed.meta.n_machines} paused={!isPlaying} />
+        </div>
+      )}
+
+      {tab === "arena" && (
+        <div key="arena" className="anim-fade-up flex flex-col gap-5">
+          <MockNotice>
+            The training curves are synthetic, not from any PPO run. The policy race replays the{" "}
+            {isMock ? "mock" : "real"} episodes for {parsed.meta.instance}.
+          </MockNotice>
+          <TrainingArena curves={curves} race={raceEntries} currentTime={currentTime} />
+        </div>
+      )}
+
+      {tab === "sandbox" && (
+        <div key="sandbox" className="anim-fade-up flex flex-col gap-5">
+          <MockNotice>
+            A toy simulator running in the browser. It is not the RAJS simulator and does not use
+            the C-MAPSS health model.
+          </MockNotice>
+          <Sandbox />
+        </div>
+      )}
+
+      {tab === "overview" && (
+      <div key="overview" className="anim-fade-up flex flex-col gap-5">
       {/* Synchronized D3 Gantt Chart */}
       <GanttChart
         episode={parsed}
@@ -502,8 +661,8 @@ export default function DashboardPage() {
               <h2 className="font-display text-sm font-bold text-white sm:text-base">
                 Policy Comparison on Instance ({parsed.meta.instance})
                 {isMock && (
-                  <span className="ml-2 rounded bg-amber-400 px-1.5 py-0.5 font-mono text-[10px] font-black tracking-widest text-amber-950">
-                    {MOCK_LABEL}
+                  <span className="ml-2">
+                    <MockBadge />
                   </span>
                 )}
               </h2>
@@ -619,6 +778,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
+      </div>
+      )}
     </main>
   );
 }

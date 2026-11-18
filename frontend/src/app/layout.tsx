@@ -41,6 +41,9 @@ export default function RootLayout({
       className={`dark ${spaceGrotesk.variable} ${jakarta.variable} ${jetbrainsMono.variable}`}
     >
       <body className="min-h-screen antialiased selection:bg-cyan-500/30 selection:text-cyan-200">
+        <div className="aurora" aria-hidden>
+          <div className="aurora-grid" />
+        </div>
         {children}
       </body>
     </html>
