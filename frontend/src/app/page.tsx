@@ -97,11 +97,11 @@ export default function DashboardPage() {
   const [apiStatus, setApiStatus] = useState<
     "connected" | "fallback" | "loading"
   >("loading");
-  const [currentTime, setCurrentTime] = useState<number>(110);
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [speed, setSpeed] = useState<number>(1);
   const [selectedJob, setSelectedJob] = useState<number | null>(null);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>("floor");
   const [selectedMachine, setSelectedMachine] = useState<number | null>(null);
 
   const episodeLog = useMemo(() => {
@@ -135,8 +135,6 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as EpisodeLog;
       setApiEpisodeLog(data);
-      const parsedData = parseEpisodeLog(data);
-      setCurrentTime(parsedData.makespan);
       setApiStatus("connected");
     } catch {
       setApiEpisodeLog(MOCK_EPISODE_LOG);
