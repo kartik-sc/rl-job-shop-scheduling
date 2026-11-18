@@ -20,7 +20,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["t", "type", "machine"],
+        "required": ["t", "type"],
         "properties": {
           "t": { "type": "number" },
           "type": {

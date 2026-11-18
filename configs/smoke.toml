@@ -1,0 +1,64 @@
+# Pipeline smoke test: the protocol's shape on small instances with tiny budgets.
+# Its numbers mean nothing.
+
+engine = "synthetic"
+max_steps = 100_000
+
+[regimes.low]
+hazard_base = 0.02
+hazard_scale = 15.0
+pm_factor = 1.0
+repair_factor = 6.0
+cycles_per_mean_op = 8.0
+
+[regimes.medium]
+hazard_base = 0.05
+hazard_scale = 20.0
+pm_factor = 1.0
+repair_factor = 6.0
+cycles_per_mean_op = 14.0
+
+[regimes.high]
+hazard_base = 0.10
+hazard_scale = 30.0
+pm_factor = 1.0
+repair_factor = 6.0
+cycles_per_mean_op = 22.0
+
+[rates]
+low = 0.5
+high = 2.0
+
+[split]
+train_instances = ["ft06"]
+test_instances = ["la01", "la02"]
+random_sizes = [[6, 6]]
+random_share = 0.5
+duration_low = 1
+duration_high = 10
+train_pool = "fit"
+test_pool = "test"
+
+[seeds]
+train = [0]
+tune = [100, 101]
+test = [200, 201]
+
+[ppo]
+n_envs = 2
+n_steps = 64
+batch_size = 64
+n_epochs = 1
+learning_rate = 3e-4
+ent_coef = 0.01
+gae_lambda = 0.95
+clip_range = 0.2
+net_arch = [32, 32]
+
+[budget]
+blind_steps = 256
+full_steps = 256
+checkpoints = 2
+
+[threshold]
+tau_grid = [0.5, 1.0]

@@ -1,0 +1,78 @@
+# RAJS experimental protocol.
+#
+# Values are placeholders until the Day 4 freeze. Any edit changes the file's
+# hash, and results from different hashes are never combined.
+
+engine = "synthetic"   # "cmapss" once backend/risk provides sample_engine
+max_steps = 100_000    # env truncation guard, far above any real episode
+
+# Hazard per engine cycle: hazard_base * exp(-rul / hazard_scale).
+# Downtimes are multiples of the instance's mean operation duration.
+# cycles_per_mean_op: engine cycles worn by one mean-length operation at rate 1.
+[regimes.low]
+hazard_base = 0.02
+hazard_scale = 15.0
+pm_factor = 1.0
+repair_factor = 6.0
+cycles_per_mean_op = 8.0
+
+[regimes.medium]
+hazard_base = 0.05
+hazard_scale = 20.0
+pm_factor = 1.0
+repair_factor = 6.0
+cycles_per_mean_op = 14.0
+
+[regimes.high]
+hazard_base = 0.10
+hazard_scale = 30.0
+pm_factor = 1.0
+repair_factor = 6.0
+cycles_per_mean_op = 22.0
+
+# Per-machine degradation multipliers, log-uniform, drawn per episode.
+[rates]
+low = 0.5
+high = 2.0
+
+[split]
+train_instances = ["ta01", "ta02", "ta03", "ta04", "ta05"]
+test_instances = [
+    "ta06", "ta07", "ta08", "ta09", "ta10",
+    "ta11", "ta12", "ta13", "ta14", "ta15", "ta16", "ta17", "ta18", "ta19", "ta20",
+]
+random_sizes = [[10, 10], [15, 15], [20, 15]]
+random_share = 0.5
+duration_low = 1
+duration_high = 99
+train_pool = "fit"
+test_pool = "test"
+
+[seeds]
+train = [0, 1, 2]
+tune = [1000, 1001, 1002, 1003, 1004]
+test = [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009]
+
+# Shared by blind and full PPO. gamma is fixed at 1.0 in code.
+[ppo]
+n_envs = 8
+n_steps = 1024
+batch_size = 256
+n_epochs = 10
+learning_rate = 3e-4
+ent_coef = 0.01
+gae_lambda = 0.95
+clip_range = 0.2
+net_arch = [256, 256]
+
+# Env steps per run, set from a pilot. Full mode needs ~8x the steps per episode.
+[budget]
+blind_steps = 2_000_000
+full_steps = 16_000_000
+checkpoints = 10
+
+[threshold]
+tau_grid = [
+    0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5,
+    0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0,
+]
