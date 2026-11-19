@@ -3,8 +3,8 @@
     python -m backend.training.train --protocol configs/protocol.toml --mode full --regime high --train-seed 0
 
 Writes ``runs/<protocol hash>/<mode>_<regime>_s<seed>/``: ``config.json``,
-``progress.csv``, ``monitor.csv``, ``checkpoints/step_<n>_steps.zip`` and
-``final.zip``. Training resets are unseeded, so each episode draws fresh
+``progress.csv``, ``monitor.csv``, TensorBoard ``events.out.tfevents.*``,
+``checkpoints/step_<n>_steps.zip`` and ``final.zip``. Training resets are unseeded, so each episode draws fresh
 failures; only the first reset of each worker is derived from the seed.
 """
 
@@ -24,6 +24,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor
 
+from backend.training.callbacks import EpisodeEventsCallback
 from backend.training.factory import make_env
 from backend.training.protocol import MODES, Mode, Protocol, git_commit, load_protocol
 
@@ -91,11 +92,12 @@ def train(
         device="cpu",
         verbose=0,
     )
-    model.set_logger(configure(str(directory), ["csv"] if quiet else ["csv", "stdout"]))
+    formats = ["csv", "tensorboard"] if quiet else ["csv", "tensorboard", "stdout"]
+    model.set_logger(configure(str(directory), formats))
     every = max(1, total // protocol.budget.checkpoints // ppo.n_envs)
     saver = CheckpointCallback(save_freq=every, save_path=str(directory / "checkpoints"), name_prefix="step")
     try:
-        model.learn(total_timesteps=total, callback=saver)
+        model.learn(total_timesteps=total, callback=[saver, EpisodeEventsCallback()])
     finally:
         env.close()
     model.save(directory / "final.zip")

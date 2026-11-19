@@ -1,0 +1,50 @@
+# Live demo: PPO on a 6x6 instance, small enough that learning shows in TensorBoard within ~2 minutes.
+# Not part of the experiment; its hash keeps it apart from protocol.toml results.
+
+engine = "synthetic"
+max_steps = 10_000
+
+[regimes.high]
+hazard_base = 0.10
+hazard_scale = 30.0
+pm_factor = 1.0
+repair_factor = 6.0
+cycles_per_mean_op = 22.0
+
+[rates]
+low = 0.5
+high = 2.0
+
+[split]
+train_instances = ["ft06"]
+test_instances = ["la01", "la02"]
+random_sizes = []
+random_share = 0.0
+duration_low = 1
+duration_high = 10
+train_pool = "fit"
+test_pool = "test"
+
+[seeds]
+train = [0]
+tune = [100]
+test = [200]
+
+[ppo]
+n_envs = 8
+n_steps = 256
+batch_size = 256
+n_epochs = 10
+learning_rate = 1e-3
+ent_coef = 0.01
+gae_lambda = 0.95
+clip_range = 0.2
+net_arch = [64, 64]
+
+[budget]
+blind_steps = 150_000
+full_steps = 150_000
+checkpoints = 3
+
+[threshold]
+tau_grid = [0.5, 1.0]

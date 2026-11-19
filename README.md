@@ -74,6 +74,11 @@ Ties break on the lowest job id. `tests/test_simulator.py` is the Day 2 gate: ma
 
 Run code in WSL: Windows Smart App Control blocks compiled extensions in Windows Python.
 
+## Demo and progress
+
+- `docs/PROGRESS_REPORT.md`: what is done, with results, for evaluators.
+- `docs/DEMO.md`: runbook for the dashboard, Kaul's risk model in TensorBoard and a ~90 s live PPO run (`bash scripts/rl_demo.sh`).
+
 ## Training and evaluation
 
 The experiment is defined by one file, `configs/protocol.toml`: regimes, per-machine degradation rates, the instance split, seeds, PPO hyperparameters, step budgets and the tau grid. Every run directory and every result row records the file's sha256, and results from different hashes are never combined. `configs/smoke.toml` has the same shape with tiny budgets.
@@ -96,7 +101,7 @@ python -m backend.evaluation.aggregate --protocol $P
 ```
 
 Outputs:
-- `runs/<hash>/<mode>_<regime>_s<seed>/`: `config.json`, `progress.csv`, `monitor.csv`, checkpoints and `final.zip`.
+- `runs/<hash>/<mode>_<regime>_s<seed>/`: `config.json`, `progress.csv`, `monitor.csv`, TensorBoard event files, checkpoints and `final.zip`. Watch training with `tensorboard --logdir runs` (http://localhost:6006).
 - `results/<hash>/`:
   - `selection.json` and `tune/`
   - `episodes/` (one CSV per contender and regime; reruns skip finished files)

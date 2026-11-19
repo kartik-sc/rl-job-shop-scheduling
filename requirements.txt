@@ -8,6 +8,7 @@ scipy>=1.11
 gymnasium>=0.29
 stable-baselines3>=2.3
 sb3-contrib>=2.3
+tensorboard>=2.14
 job-shop-lib>=1.0
 fastapi>=0.110
 uvicorn[standard]>=0.29

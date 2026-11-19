@@ -39,6 +39,7 @@ def test_training_saves_checkpoints_and_config(pipeline: tuple[Protocol, Path, P
     config = json.loads((run / "config.json").read_text())
     assert config["protocol_sha256"] == protocol.sha256 and config["mode"] == "full"
     assert (run / "progress.csv").exists() and (run / "monitor.csv").exists()
+    assert any(run.glob("events.out.tfevents.*"))
 
 
 def test_training_refuses_to_overwrite_a_finished_run(pipeline: tuple[Protocol, Path, Path]) -> None:
